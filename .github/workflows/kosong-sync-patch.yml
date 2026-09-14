@@ -1,0 +1,71 @@
+# kosong sync + patch
+#
+# Everything lives on the default branch (main): upstream tracking, this
+# workflow, and the patch commit. The workflow syncs from upstream itself,
+# so GitHub's "Sync fork" button is never needed.
+#
+# IMPORTANT: never use the button's "Discard my changes" (force sync) mode.
+# A force sync resets main to upstream and deletes this workflow file along
+# with the patch commit, disabling the automation until re-bootstrapped.
+# (Merge-mode sync is harmless: it does the same merge this workflow does.)
+#
+# Trigger notes:
+# - schedule / workflow_dispatch read the workflow from the default branch.
+# - on:push covers the case where someone merges upstream via the Sync fork
+#   button. Pushes made by this workflow itself use GITHUB_TOKEN, which
+#   GitHub deliberately does NOT re-trigger workflows for — no self-loop.
+#
+# Merge semantics: our history deletes the "files" field; upstream history
+# does not touch it, so merges stay clean. If upstream ever edits the same
+# region of packages/kosong/package.json, the merge step fails red and a
+# human resolves it once.
+
+name: kosong sync+patch
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '23 18 * * *' # daily 18:23 UTC (02:23 Beijing)
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # push merge/patch commits back to main
+
+concurrency:
+  group: kosong-sync-patch
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch and merge upstream main
+        run: |
+          git remote add upstream https://github.com/MoonshotAI/kimi-code.git
+          git fetch upstream main
+          git merge --no-edit upstream/main
+        # "Already up to date." exits 0 — safe no-op when nothing changed.
+
+      - name: Re-apply kosong patch (idempotent)
+        run: node .github/scripts/apply-kosong-patch.mjs
+
+      - name: Commit patch if the merge left the tree dirty
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -am "chore(kosong): re-apply files-field removal after upstream merge"
+          fi
+
+      - name: Push main
+        run: git push origin main

@@ -20,9 +20,6 @@
     "agent",
     "provider"
   ],
-  "files": [
-    "dist"
-  ],
   "type": "module",
   "imports": {
     "#/*": "./src/*.ts"
